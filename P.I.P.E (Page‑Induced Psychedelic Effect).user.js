@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         P.I.P.E (Page‑Induced Psychedelic Effect)
 // @namespace    https://github.com/Gen1xLol/pipe
-// @version      2.1
+// @version      3.0
 // @description  Corrupts pages enough to make you have a seizure, mostly works on HTML5 games
 // @author       Gen1x
 // @match        *://*/*
@@ -18,6 +18,308 @@
     const originalMethods = {};
 
     const originalDrawImage = CanvasRenderingContext2D.prototype.drawImage;
+
+    const runtimeVariableCorruption = {
+    VARIABLE_CORRUPTION_CHANCE: 0.5,
+    ASSIGNMENT_CORRUPTION_CHANCE: 0.1,
+    GETTER_CORRUPTION_CHANCE: 0.5,
+    corruptedVariables: new WeakMap(),
+    originalDescriptors: new WeakMap(),
+    variableAccessLog: new Map(),
+
+    wrapVariableAccess: (obj, prop, descriptor) => {
+        if (!descriptor || typeof descriptor.value === 'function') {
+            return descriptor;
+        }
+
+        const originalValue = descriptor.value;
+        const originalGet = descriptor.get;
+        const originalSet = descriptor.set;
+
+        if (!runtimeVariableCorruption.originalDescriptors.has(obj)) {
+            runtimeVariableCorruption.originalDescriptors.set(obj, new Map());
+        }
+        runtimeVariableCorruption.originalDescriptors.get(obj).set(prop, descriptor);
+
+        const newDescriptor = {
+            enumerable: descriptor.enumerable,
+            configurable: descriptor.configurable
+        };
+
+        if (originalGet || descriptor.value !== undefined) {
+            newDescriptor.get = function() {
+                let value = originalGet ? originalGet.call(this) : originalValue;
+
+                const accessKey = `${obj.constructor.name}.${prop}`;
+                runtimeVariableCorruption.variableAccessLog.set(accessKey,
+                    (runtimeVariableCorruption.variableAccessLog.get(accessKey) || 0) + 1
+                );
+
+                if (Math.random() < runtimeVariableCorruption.GETTER_CORRUPTION_CHANCE) {
+                    value = runtimeVariableCorruption.corruptValue(value, prop);
+                }
+
+                return value;
+            };
+        }
+
+        if (originalSet || descriptor.writable) {
+            newDescriptor.set = function(newValue) {
+
+                if (Math.random() < runtimeVariableCorruption.ASSIGNMENT_CORRUPTION_CHANCE) {
+                    newValue = runtimeVariableCorruption.corruptValue(newValue, prop);
+                }
+
+                if (originalSet) {
+                    originalSet.call(this, newValue);
+                } else {
+                    originalValue = newValue;
+                }
+            };
+        }
+
+        return newDescriptor;
+    },
+
+    corruptValue: (value, propName) => {
+        const corruptionType = Math.random();
+
+        if (typeof value === 'number') {
+            if (corruptionType < 0.3) {
+
+                return value + (Math.random() - 0.5) * Math.abs(value) * 0.2;
+            } else if (corruptionType < 0.5) {
+
+                return (value << 1) | (value >>> 1);
+            } else if (corruptionType < 0.7) {
+
+                return value * (0.5 + Math.random());
+            } else {
+
+                return -value;
+            }
+        } else if (typeof value === 'string') {
+            if (corruptionType < 0.2) {
+
+                return value.split('').sort(() => Math.random() - 0.5).join('');
+            } else if (corruptionType < 0.4) {
+
+                return value.replace(/./g, char =>
+                    Math.random() < 0.1 ? String.fromCharCode(Math.floor(Math.random() * 95) + 32) : char
+                );
+            } else if (corruptionType < 0.6) {
+
+                return value.split('').map(char =>
+                    Math.random() < 0.3 ? (char === char.toUpperCase() ? char.toLowerCase() : char.toUpperCase()) : char
+                ).join('');
+            } else {
+
+                const start = Math.floor(Math.random() * value.length);
+                const end = start + Math.floor(Math.random() * (value.length - start));
+                return value.substring(0, start) + value.substring(end);
+            }
+        } else if (typeof value === 'boolean') {
+            return Math.random() < 0.5 ? !value : value;
+        } else if (Array.isArray(value)) {
+            if (corruptionType < 0.3) {
+
+                return [...value].sort(() => Math.random() - 0.5);
+            } else if (corruptionType < 0.5) {
+
+                return value.map(item =>
+                    Math.random() < 0.2 ? runtimeVariableCorruption.corruptValue(item, propName) : item
+                );
+            } else if (corruptionType < 0.7) {
+
+                const start = Math.floor(Math.random() * value.length);
+                return value.slice(start);
+            } else {
+
+                return [...value, ...value.slice(0, Math.floor(Math.random() * 3))];
+            }
+        } else if (value && typeof value === 'object') {
+            if (corruptionType < 0.4) {
+
+                const corruptedObj = { ...value };
+                Object.keys(corruptedObj).forEach(key => {
+                    if (Math.random() < 0.2) {
+                        corruptedObj[key] = runtimeVariableCorruption.corruptValue(corruptedObj[key], key);
+                    }
+                });
+                return corruptedObj;
+            } else {
+
+                const corruptedObj = { ...value };
+                const keys = Object.keys(corruptedObj);
+                if (keys.length > 0 && Math.random() < 0.3) {
+                    delete corruptedObj[keys[Math.floor(Math.random() * keys.length)]];
+                }
+                return corruptedObj;
+            }
+        }
+
+        return value;
+    },
+
+    corruptFunctionScope: (func) => {
+        const originalFunc = func;
+
+        return function(...args) {
+
+            if (Math.random() < runtimeVariableCorruption.VARIABLE_CORRUPTION_CHANCE) {
+                args = args.map(arg =>
+                    Math.random() < 0.3 ? runtimeVariableCorruption.corruptValue(arg, 'argument') : arg
+                );
+            }
+
+            const result = originalFunc.apply(this, args);
+
+            if (Math.random() < runtimeVariableCorruption.VARIABLE_CORRUPTION_CHANCE * 0.5) {
+                return runtimeVariableCorruption.corruptValue(result, 'return');
+            }
+
+            return result;
+        };
+    },
+
+    interceptVariableDeclarations: () => {
+
+        const originalEval = window.eval;
+        window.eval = function(code) {
+
+            const varRegex = /(?:var|let|const)\s+([a-zA-Z_$][a-zA-Z0-9_$]*)\s*=\s*(.+?)(?:;|$)/g;
+            let match;
+            let corruptedCode = code;
+
+            while ((match = varRegex.exec(code)) !== null) {
+                const varName = match[1];
+                const varValue = match[2];
+
+                if (Math.random() < runtimeVariableCorruption.VARIABLE_CORRUPTION_CHANCE) {
+
+                    const corruptionWrapper = `
+                        (function(originalValue) {
+                            let _corruptedValue = originalValue;
+                            return new Proxy({}, {
+                                get: () => {
+                                    if (Math.random() < ${runtimeVariableCorruption.GETTER_CORRUPTION_CHANCE}) {
+                                        return runtimeVariableCorruption.corruptValue(_corruptedValue, '${varName}');
+                                    }
+                                    return _corruptedValue;
+                                },
+                                set: (target, prop, value) => {
+                                    if (Math.random() < ${runtimeVariableCorruption.ASSIGNMENT_CORRUPTION_CHANCE}) {
+                                        value = runtimeVariableCorruption.corruptValue(value, '${varName}');
+                                    }
+                                    _corruptedValue = value;
+                                    return true;
+                                }
+                            });
+                        })(${varValue})
+                    `;
+
+                    corruptedCode = corruptedCode.replace(match[0],
+                        `${match[0].split('=')[0]}= ${corruptionWrapper};`
+                    );
+                }
+            }
+
+            return originalEval.call(this, corruptedCode);
+        };
+    },
+
+    corruptObjectProperties: () => {
+        const originalDefineProperty = Object.defineProperty;
+        Object.defineProperty = function(obj, prop, descriptor) {
+            if (Math.random() < runtimeVariableCorruption.VARIABLE_CORRUPTION_CHANCE) {
+                descriptor = runtimeVariableCorruption.wrapVariableAccess(obj, prop, descriptor);
+            }
+            return originalDefineProperty.call(this, obj, prop, descriptor);
+        };
+
+        const corruptExistingProperties = (obj, depth = 0) => {
+            if (depth > 3 || !obj || typeof obj !== 'object') return;
+
+            Object.getOwnPropertyNames(obj).forEach(prop => {
+                if (prop.startsWith('_') || typeof obj[prop] === 'function') return;
+
+                try {
+                    const descriptor = Object.getOwnPropertyDescriptor(obj, prop);
+                    if (descriptor && Math.random() < runtimeVariableCorruption.VARIABLE_CORRUPTION_CHANCE * 0.5) {
+                        const newDescriptor = runtimeVariableCorruption.wrapVariableAccess(obj, prop, descriptor);
+                        Object.defineProperty(obj, prop, newDescriptor);
+                    }
+                } catch (e) {
+
+                }
+            });
+        };
+
+        [window, document, navigator, location].forEach(obj => {
+            if (obj) corruptExistingProperties(obj);
+        });
+    },
+
+    corruptAssignmentOperators: () => {
+
+        const originalToString = Object.prototype.toString;
+        Object.prototype.toString = function() {
+            const result = originalToString.call(this);
+
+            if (Math.random() < runtimeVariableCorruption.VARIABLE_CORRUPTION_CHANCE * 0.1) {
+                return runtimeVariableCorruption.corruptValue(result, 'toString');
+            }
+
+            return result;
+        };
+    },
+
+    startPeriodicCorruption: () => {
+        setInterval(() => {
+
+            Object.keys(window).forEach(key => {
+                if (Math.random() < 0.01 &&
+                    !key.startsWith('_') &&
+                    typeof window[key] !== 'function' &&
+                    !['document', 'window', 'console', 'navigator', 'location'].includes(key)) {
+
+                    try {
+                        const originalValue = window[key];
+                        window[key] = runtimeVariableCorruption.corruptValue(originalValue, key);
+
+                        setTimeout(() => {
+                            window[key] = originalValue;
+                        }, 1000 + Math.random() * 2000);
+                    } catch (e) {
+
+                    }
+                }
+            });
+        }, 2000 + Math.random() * 3000);
+    },
+
+    getCorruptionStats: () => {
+        return {
+            corruptedVariables: runtimeVariableCorruption.corruptedVariables.size || 0,
+            variableAccesses: runtimeVariableCorruption.variableAccessLog.size,
+            totalAccesses: Array.from(runtimeVariableCorruption.variableAccessLog.values()).reduce((a, b) => a + b, 0)
+        };
+    },
+
+    init: () => {
+        console.log('Initializing Runtime Variable Corruption System...');
+
+        runtimeVariableCorruption.interceptVariableDeclarations();
+        runtimeVariableCorruption.corruptObjectProperties();
+        runtimeVariableCorruption.corruptAssignmentOperators();
+        runtimeVariableCorruption.startPeriodicCorruption();
+
+        window.runtimeVariableCorruption = runtimeVariableCorruption;
+
+        console.log('Runtime Variable Corruption System initialized!');
+        console.log('Variables, assignments, and property access will now be corrupted at runtime!');
+    }
+};
 
     const runtimeFunctionCorruption = {
         discoveredFunctions: new Map(),
@@ -1014,6 +1316,7 @@
     };
 
     universalAudioCorruption.init();
+    runtimeVariableCorruption.init();
 
     const codeCorruption = {
         corruptEventSystem: () => {
@@ -1075,229 +1378,6 @@
 
                 return originalAddEventListener.call(this, type, corruptedListener, actualOptions);
             };
-        },
-
-        corruptRuntimeVariables: () => {
-
-            const variableTracker = new Map();
-            const VARIABLE_CORRUPTION_CHANCE = 0.08;
-
-            const corruptVariableAccess = () => {
-
-                const originalWindowPropertyDescriptor = Object.getOwnPropertyDescriptor(window, 'window');
-
-                const originalEval = window.eval;
-                window.eval = function(code) {
-
-                    if (Math.random() < VARIABLE_CORRUPTION_CHANCE && code.includes('let ') || code.includes('var ')) {
-                        console.log('Variable declaration intercepted:', code);
-                    }
-                    return originalEval.call(this, code);
-                };
-
-                const windowHandler = {
-                    set: function(target, property, value) {
-
-                        if (typeof value === 'function' || property.toUpperCase() === property) {
-                            return Reflect.set(target, property, value);
-                        }
-
-                        if (!variableTracker.has(property)) {
-                            variableTracker.set(property, {
-                                original: value,
-                                type: typeof value,
-                                corrupted: false
-                            });
-                        }
-
-                        if (Math.random() < VARIABLE_CORRUPTION_CHANCE) {
-                            const corruptedValue = corruptVariableValue(value, property);
-                            console.log(`Variable ${property} corrupted: ${value} -> ${corruptedValue}`);
-                            return Reflect.set(target, property, corruptedValue);
-                        }
-
-                        return Reflect.set(target, property, value);
-                    },
-
-                    get: function(target, property) {
-                        const value = Reflect.get(target, property);
-
-                        if (Math.random() < VARIABLE_CORRUPTION_CHANCE * 0.3 &&
-                            variableTracker.has(property) &&
-                            typeof value !== 'function' &&
-                            property.toUpperCase() !== property) {
-
-                            const corruptedValue = corruptVariableValue(value, property);
-                            console.log(`Variable ${property} corrupted on access: ${value} -> ${corruptedValue}`);
-
-                            Reflect.set(target, property, corruptedValue);
-                            return corruptedValue;
-                        }
-
-                        return value;
-                    }
-                };
-
-                try {
-
-                } catch (e) {
-                    console.log('Could not proxy window object');
-                }
-            };
-
-            const corruptVariableValue = (value, varName) => {
-                const originalType = typeof value;
-
-                switch (originalType) {
-                    case 'number':
-                        if (Math.random() < 0.4) {
-
-                            return value + (Math.random() - 0.5) * value * 0.2;
-                        } else if (Math.random() < 0.3) {
-
-                            return value ^ Math.floor(Math.random() * 16);
-                        } else {
-
-                            return value.toString() + Math.random();
-                        }
-
-                    case 'string':
-                        if (Math.random() < 0.3) {
-
-                            return value.split('').sort(() => Math.random() - 0.5).join('');
-                        } else if (Math.random() < 0.3) {
-
-                            return value + '_corrupted_' + Math.random();
-                        } else {
-
-                            const corruptIndex = Math.floor(Math.random() * value.length);
-                            return value.substring(0, corruptIndex) +
-                                String.fromCharCode(Math.floor(Math.random() * 126) + 33) +
-                                value.substring(corruptIndex + 1);
-                        }
-
-                    case 'boolean':
-                        return Math.random() < 0.5 ? !value : value;
-
-                    case 'object':
-                        if (Array.isArray(value)) {
-
-                            if (Math.random() < 0.4) {
-                                return value.slice().sort(() => Math.random() - 0.5);
-                            } else {
-                                return value.map(item => Math.random() < 0.2 ? corruptVariableValue(item, varName) : item);
-                            }
-                        } else if (value !== null) {
-
-                            const corruptedObj = {
-                                ...value
-                            };
-                            Object.keys(corruptedObj).forEach(key => {
-                                if (Math.random() < 0.3) {
-                                    corruptedObj[key] = corruptVariableValue(corruptedObj[key], key);
-                                }
-                            });
-                            return corruptedObj;
-                        }
-                        break;
-
-                    default:
-                        return value;
-                }
-
-                return value;
-            };
-
-            const swapVariables = () => {
-
-                const variables = {};
-
-                for (let prop in window) {
-                    try {
-                        const value = window[prop];
-                        const type = typeof value;
-
-                        if (type === 'function' ||
-                            prop.toUpperCase() === prop ||
-                            prop.startsWith('_') || ['undefined', 'object'].includes(type) || ['console', 'document', 'window', 'navigator'].includes(prop)) {
-                            continue;
-                        }
-
-                        if (!variables[type]) {
-                            variables[type] = [];
-                        }
-
-                        variables[type].push({
-                            name: prop,
-                            value: value
-                        });
-                    } catch (e) {
-
-                    }
-                }
-
-                Object.keys(variables).forEach(type => {
-                    const varsOfType = variables[type];
-                    if (varsOfType.length > 1 && Math.random() < 0.15) {
-
-                        const index1 = Math.floor(Math.random() * varsOfType.length);
-                        let index2 = Math.floor(Math.random() * varsOfType.length);
-                        while (index2 === index1) {
-                            index2 = Math.floor(Math.random() * varsOfType.length);
-                        }
-
-                        const var1 = varsOfType[index1];
-                        const var2 = varsOfType[index2];
-
-                        try {
-
-                            const temp = var1.value;
-                            window[var1.name] = var2.value;
-                            window[var2.name] = temp;
-
-                            console.log(`Variables swapped: ${var1.name} (${temp}) <-> ${var2.name} (${var2.value})`);
-                        } catch (e) {
-
-                        }
-                    }
-                });
-            };
-
-            const startVariableCorruption = () => {
-                setInterval(() => {
-
-                    if (Math.random() < 0.1) {
-                        swapVariables();
-                    }
-
-                    if (Math.random() < 0.15) {
-                        for (let prop in window) {
-                            try {
-                                const value = window[prop];
-                                const type = typeof value;
-
-                                if (type === 'function' ||
-                                    prop.toUpperCase() === prop ||
-                                    prop.startsWith('_') || ['undefined', 'object'].includes(type) || ['console', 'document', 'window', 'navigator'].includes(prop)) {
-                                    continue;
-                                }
-
-                                if (Math.random() < 0.05) {
-                                    window[prop] = corruptVariableValue(value, prop);
-                                    console.log(`Runtime variable ${prop} corrupted`);
-                                }
-                            } catch (e) {
-
-                            }
-                        }
-                    }
-                }, 2000 + Math.random() * 3000);
-            };
-
-            corruptVariableAccess();
-            startVariableCorruption();
-
-            console.log('Runtime variable corruption initialized');
         },
 
         corruptFunctionParams: (fn) => {
@@ -1390,93 +1470,23 @@
             }
         },
 
-        corruptWebGLArgs: (args, methodName) => {
+    validateWebGLCall: (ctx, methodName, args) => {
+    const error = ctx.getError();
+    if (error !== ctx.NO_ERROR) {
+        const errorNames = {
+            [ctx.INVALID_ENUM]: 'INVALID_ENUM',
+            [ctx.INVALID_VALUE]: 'INVALID_VALUE',
+            [ctx.INVALID_OPERATION]: 'INVALID_OPERATION',
+            [ctx.OUT_OF_MEMORY]: 'OUT_OF_MEMORY',
+            [ctx.INVALID_FRAMEBUFFER_OPERATION]: 'INVALID_FRAMEBUFFER_OPERATION'
+        };
 
-            const safeMethods = [
-                'bindTexture', 'bindBuffer', 'bindFramebuffer', 'bindRenderbuffer',
-                'texParameteri', 'texParameterf', 'enable', 'disable',
-                'blendFunc', 'depthFunc', 'cullFace', 'frontFace',
-                'pixelStorei', 'activeTexture', 'useProgram',
-                'enableVertexAttribArray', 'disableVertexAttribArray',
+        console.warn(`WebGL Error in ${methodName}: ${errorNames[error] || error}`, args);
 
-                'texImage2D', 'texSubImage2D', 'renderbufferStorage',
-                'framebufferTexture2D', 'framebufferRenderbuffer'
-            ];
-
-            if (safeMethods.some(method => methodName.includes(method))) {
-                return;
-            }
-
-            for (let i = 0; i < args.length; i++) {
-                if (typeof args[i] === 'number') {
-
-                    if (i === 0 && (
-                            methodName.includes('bind') ||
-                            methodName.includes('enable') ||
-                            methodName.includes('texParameter') ||
-                            methodName.includes('pixelStore')
-                        )) {
-                        continue;
-                    }
-
-                    if (methodName.includes('texImage2D') || methodName.includes('renderbufferStorage')) {
-
-                        if (i === 3 || i === 4) {
-                            continue;
-                        }
-                    }
-
-                    if (methodName.includes('uniform')) {
-
-                        if (Math.random() < 0.2) {
-                            args[i] += (Math.random() - 0.5) * args[i] * 0.05;
-                        }
-                    } else if (methodName.includes('vertexAttrib') && i > 0) {
-
-                        if (Math.random() < 0.3) {
-                            args[i] += (Math.random() - 0.5) * args[i] * 0.1;
-                        }
-                    } else if (methodName.includes('clear') && methodName.includes('Color')) {
-
-                        if (Math.random() < 0.4) {
-                            args[i] = Math.max(0, Math.min(1, args[i] + (Math.random() - 0.5) * 0.2));
-                        }
-                    } else if (methodName.includes('drawArrays') || methodName.includes('drawElements')) {
-
-                        return;
-                    }
-                }
-            }
-        },
-
-        corruptWebGLState: (ctx) => {
-
-            if (!ctx.canvas || ctx.canvas.width <= 0 || ctx.canvas.height <= 0) {
-                return;
-            }
-
-            if (Math.random() < 0.15) {
-
-                const r = Math.max(0, Math.min(1, Math.random() * 0.5));
-                const g = Math.max(0, Math.min(1, Math.random() * 0.5));
-                const b = Math.max(0, Math.min(1, Math.random() * 0.5));
-                const a = 1.0;
-                ctx.clearColor(r, g, b, a);
-            }
-
-            if (Math.random() < 0.05) {
-
-                const currentFramebuffer = ctx.getParameter(ctx.FRAMEBUFFER_BINDING);
-                if (currentFramebuffer === null) {
-                    if (ctx.getParameter(ctx.DEPTH_TEST)) {
-                        ctx.disable(ctx.DEPTH_TEST);
-                    } else {
-                        ctx.enable(ctx.DEPTH_TEST);
-                    }
-                }
-            }
-        },
-
+        return false;
+    }
+    return true;
+},
         validateFramebuffer: (ctx) => {
             const status = ctx.checkFramebufferStatus(ctx.FRAMEBUFFER);
             if (status !== ctx.FRAMEBUFFER_COMPLETE) {
@@ -1538,6 +1548,162 @@
                     args[i] = (args[i] << 1) | (args[i] >>> 1);
                 }
             }
+        },
+
+  corruptWebGLArgs: (args, methodName) => {
+    const safeMethods = [
+        'bindTexture', 'bindBuffer', 'bindFramebuffer', 'bindRenderbuffer',
+        'texParameteri', 'texParameterf', 'enable', 'disable',
+        'blendFunc', 'depthFunc', 'cullFace', 'frontFace',
+        'pixelStorei', 'activeTexture', 'useProgram',
+        'enableVertexAttribArray', 'disableVertexAttribArray',
+        'texImage2D', 'texSubImage2D', 'renderbufferStorage',
+        'framebufferTexture2D', 'framebufferRenderbuffer'
+    ];
+
+    if (safeMethods.some(method => methodName.includes(method))) {
+        return;
+    }
+
+    for (let i = 0; i < args.length; i++) {
+        if (typeof args[i] === 'number') {
+            if (i === 0 && (
+                    methodName.includes('bind') ||
+                    methodName.includes('enable') ||
+                    methodName.includes('texParameter') ||
+                    methodName.includes('pixelStore')
+                )) {
+                continue;
+            }
+            if (methodName.includes('texImage2D') || methodName.includes('renderbufferStorage')) {
+                if (i === 3 || i === 4) {
+                    continue;
+                }
+            }
+
+            if (methodName.includes('uniform')) {
+                if (Math.random() < 0.2) {
+                    args[i] += (Math.random() - 0.5) * args[i] * 0.05;
+                }
+
+                if (methodName.includes('Matrix') ||
+                    methodName.includes('matrix') ||
+                    methodName.includes('transform') ||
+                    methodName.includes('Transform') ||
+                    methodName.includes('rotation') ||
+                    methodName.includes('Rotation') ||
+                    methodName.includes('scale') ||
+                    methodName.includes('Scale') ||
+                    methodName.includes('position') ||
+                    methodName.includes('Position')) {
+
+                    if (Math.random() < 0.3) {
+
+                        args[i] += (Math.random() - 0.5) * args[i] * 0.15;
+                    }
+                }
+
+                if (methodName.includes('texCoord') ||
+                    methodName.includes('uv') ||
+                    methodName.includes('UV') ||
+                    methodName.includes('texture')) {
+
+                    if (Math.random() < 0.25) {
+
+                        args[i] += (Math.random() - 0.5) * 0.1;
+                    }
+                }
+            }
+
+            else if (methodName.includes('vertexAttrib') && i > 0) {
+                if (Math.random() < 0.3) {
+                    args[i] += (Math.random() - 0.5) * args[i] * 0.1;
+                }
+
+                if (i >= 2 && i <= 3) {
+                    if (Math.random() < 0.2) {
+
+                        const angle = (Math.random() - 0.5) * 0.2;
+                        args[i] += Math.sin(angle) * 0.1;
+                    }
+                }
+            }
+
+            else if (methodName.includes('clear') && methodName.includes('Color')) {
+                if (Math.random() < 0.4) {
+                    args[i] = Math.max(0, Math.min(1, args[i] + (Math.random() - 0.5) * 0.2));
+                }
+            }
+
+            else if (methodName.includes('drawArrays') || methodName.includes('drawElements')) {
+                return;
+            }
+        }
+
+        else if (args[i] instanceof Float32Array) {
+            if (methodName.includes('uniformMatrix') ||
+                methodName.includes('Matrix') ||
+                methodName.includes('matrix')) {
+
+                if (Math.random() < 0.15) {
+
+                    const corruptedArray = new Float32Array(args[i]);
+                    for (let j = 0; j < corruptedArray.length; j++) {
+                        if (Math.random() < 0.1) {
+
+                            corruptedArray[j] += (Math.random() - 0.5) * corruptedArray[j] * 0.08;
+                        }
+                    }
+                    args[i] = corruptedArray;
+                }
+            }
+        }
+    }
+
+    if (methodName.includes('texParameter')) {
+
+        if (Math.random() < 0.1) {
+            if (args[1] === 0x2800 || args[1] === 0x2801) {
+
+                const filters = [0x2600, 0x2601, 0x2700, 0x2701, 0x2702, 0x2703];
+                args[2] = filters[Math.floor(Math.random() * filters.length)];
+            }
+        }
+    }
+
+    if (methodName.includes('bindTexture') && Math.random() < 0.05) {
+        if (args[1] !== null && args[1] !== 0) {
+
+            args[1] = Math.max(1, args[1] + Math.floor((Math.random() - 0.5) * 3));
+        }
+    }
+},
+        corruptWebGLState: (ctx) => {
+
+            if (!ctx.canvas || ctx.canvas.width <= 0 || ctx.canvas.height <= 0) {
+                return;
+            }
+
+            if (Math.random() < 0.15) {
+
+                const r = Math.max(0, Math.min(1, Math.random() * 0.5));
+                const g = Math.max(0, Math.min(1, Math.random() * 0.5));
+                const b = Math.max(0, Math.min(1, Math.random() * 0.5));
+                const a = 1.0;
+                ctx.clearColor(r, g, b, a);
+            }
+
+            if (Math.random() < 0.05) {
+
+                const currentFramebuffer = ctx.getParameter(ctx.FRAMEBUFFER_BINDING);
+                if (currentFramebuffer === null) {
+                    if (ctx.getParameter(ctx.DEPTH_TEST)) {
+                        ctx.disable(ctx.DEPTH_TEST);
+                    } else {
+                        ctx.enable(ctx.DEPTH_TEST);
+                    }
+                }
+            }
         }
     };
 
@@ -1567,7 +1733,6 @@
             methodsToCorrupt = [
                 'clear', 'clearColor', 'clearDepth', 'clearStencil',
                 'drawArrays', 'drawElements', 'drawArraysInstanced', 'drawElementsInstanced',
-                'viewport', 'scissor',
                 'uniform1f', 'uniform1i', 'uniform2f', 'uniform2i', 'uniform3f', 'uniform3i', 'uniform4f', 'uniform4i',
                 'uniformMatrix2fv', 'uniformMatrix3fv', 'uniformMatrix4fv',
                 'vertexAttrib1f', 'vertexAttrib2f', 'vertexAttrib3f', 'vertexAttrib4f',
@@ -1673,7 +1838,6 @@
     codeCorruption.corruptTimingFunctions();
     codeCorruption.corruptAnimationFrames();
     codeCorruption.corruptEventSystem();
-    codeCorruption.corruptRuntimeVariables();
 
     const observer = new MutationObserver((mutations) => {
         mutations.forEach(mutation => {
@@ -1710,10 +1874,6 @@
     });
 
     setInterval(() => {
-        if (Math.random() < 0.5) {
-            codeCorruption.corruptRuntimeVariables();
-        }
-
         if (Math.random() < 0.1) {
             const canvases = document.querySelectorAll('canvas');
             canvases.forEach(canvas => {
