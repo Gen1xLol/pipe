@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         P.I.P.E (Page‑Induced Psychedelic Effect)
 // @namespace    https://github.com/Gen1xLol/pipe
-// @version      1.0
+// @version      2.0
 // @description  Corrupts pages enough to make you have a seizure, mostly works on HTML5 games
 // @author       Gen1x
 // @match        *://*/*
@@ -18,6 +18,287 @@
 
     const originalGetContext = HTMLCanvasElement.prototype.getContext;
     const originalMethods = {};
+
+const originalDrawImage = CanvasRenderingContext2D.prototype.drawImage;
+
+const runtimeFunctionCorruption = {
+    discoveredFunctions: new Map(),
+    executionHistory: new Set(),
+    maxExecutions: 20,
+    isExecuting: false, 
+    executionCount: 0,
+    lastExecutionTime: 0,
+
+    discoverFunctions: () => {
+        const functions = new Map();
+
+        for (let prop in window) {
+            try {
+                const value = window[prop];
+                if (typeof value === 'function' &&
+                    !prop.startsWith('_') &&
+                    !prop.startsWith('webkit') &&
+                    !prop.startsWith('moz') &&
+                    !prop.includes('Corruption') && 
+                    !prop.includes('corruption') &&
+                    !prop.includes('Error') &&
+                    !prop.includes('event') &&
+                    !prop.includes('Event') &&
+                    !prop.includes('callback') &&
+                    !prop.includes('Callback') &&
+                    !prop.includes('handler') &&
+                    !prop.includes('Handler') &&
+                    !prop.includes('listener') &&
+                    !prop.includes('Listener') &&
+                    !['console', 'alert', 'confirm', 'prompt', 'open', 'close', 'focus', 'blur', 'print', 'stop', 'eval', 'setTimeout', 'setInterval', 'clearTimeout', 'clearInterval', 'requestAnimationFrame', 'cancelAnimationFrame'].includes(prop)) {
+
+                    if (value.length === 0) {
+                        functions.set(`window.${prop}`, value);
+                    }
+                }
+            } catch (e) {
+
+            }
+        }
+
+        const safeMathFunctions = ['random', 'floor', 'ceil', 'round', 'abs'];
+        safeMathFunctions.forEach(prop => {
+            try {
+                const value = Math[prop];
+                if (typeof value === 'function' && value.length === 0) {
+                    functions.set(`Math.${prop}`, value);
+                }
+            } catch (e) {}
+        });
+
+        const safeDateFunctions = ['now'];
+        safeDateFunctions.forEach(prop => {
+            try {
+                const value = Date[prop];
+                if (typeof value === 'function' && value.length === 0) {
+                    functions.set(`Date.${prop}`, value);
+                }
+            } catch (e) {}
+        });
+
+        runtimeFunctionCorruption.discoveredFunctions = functions;
+        console.log(`Discovered ${functions.size} executable functions`);
+        return functions;
+    },
+
+    executeRandomFunction: () => {
+
+        if (runtimeFunctionCorruption.isExecuting) {
+            return;
+        }
+
+        const now = Date.now();
+        if (now - runtimeFunctionCorruption.lastExecutionTime < 1000) {
+            return; 
+        }
+
+        if (runtimeFunctionCorruption.executionCount >= runtimeFunctionCorruption.maxExecutions) {
+            return; 
+        }
+
+        const functions = Array.from(runtimeFunctionCorruption.discoveredFunctions.entries());
+        if (functions.length === 0) {
+            return;
+        }
+
+        runtimeFunctionCorruption.isExecuting = true;
+        runtimeFunctionCorruption.lastExecutionTime = now;
+        runtimeFunctionCorruption.executionCount++;
+
+        const randomIndex = Math.floor(Math.random() * functions.length);
+        const [functionName, functionRef] = functions[randomIndex];
+
+        if (runtimeFunctionCorruption.executionHistory.has(functionName)) {
+            runtimeFunctionCorruption.isExecuting = false;
+            return;
+        }
+
+        try {
+            console.log(`Executing random function: ${functionName}`);
+            runtimeFunctionCorruption.executionHistory.add(functionName);
+
+            const timeoutId = setTimeout(() => {
+                console.log(`Function ${functionName} timed out`);
+                runtimeFunctionCorruption.isExecuting = false;
+            }, 100); 
+
+            setTimeout(() => {
+                try {
+                    const result = functionRef();
+                    clearTimeout(timeoutId);
+
+                    console.log(`Function ${functionName} executed successfully`);
+                } catch (error) {
+                    console.log(`Error executing ${functionName}:`, error.message);
+                } finally {
+                    runtimeFunctionCorruption.isExecuting = false;
+                }
+            }, 0);
+
+        } catch (error) {
+            console.log(`Error executing ${functionName}:`, error.message);
+            runtimeFunctionCorruption.isExecuting = false;
+        }
+    },
+
+    startRandomExecution: () => {
+
+        runtimeFunctionCorruption.discoverFunctions();
+
+        setInterval(() => {
+            if (Math.random() < 0.1) { 
+                runtimeFunctionCorruption.executeRandomFunction();
+            }
+        }, 5000 + Math.random() * 10000); 
+
+        setInterval(() => {
+            if (!runtimeFunctionCorruption.isExecuting) {
+                runtimeFunctionCorruption.discoverFunctions();
+            }
+        }, 30000 + Math.random() * 30000); 
+
+        setInterval(() => {
+            runtimeFunctionCorruption.executionHistory.clear();
+            runtimeFunctionCorruption.executionCount = 0;
+        }, 60000); 
+
+        setInterval(() => {
+            if (Math.random() < 0.05 && !runtimeFunctionCorruption.isExecuting) { 
+                const burstCount = Math.floor(Math.random() * 2) + 1; 
+                for (let i = 0; i < burstCount; i++) {
+                    setTimeout(() => {
+                        runtimeFunctionCorruption.executeRandomFunction();
+                    }, i * 2000); 
+                }
+            }
+        }, 60000 + Math.random() * 60000); 
+
+        console.log('Runtime function execution corruption started with safety controls');
+    },
+
+    triggerRandomExecution: () => {
+        if (!runtimeFunctionCorruption.isExecuting) {
+            runtimeFunctionCorruption.executeRandomFunction();
+        }
+    },
+
+    getStats: () => {
+        return {
+            discoveredFunctions: runtimeFunctionCorruption.discoveredFunctions.size,
+            executionHistory: runtimeFunctionCorruption.executionHistory.size,
+            maxExecutions: runtimeFunctionCorruption.maxExecutions,
+            executionCount: runtimeFunctionCorruption.executionCount,
+            isExecuting: runtimeFunctionCorruption.isExecuting
+        };
+    }
+};
+
+runtimeFunctionCorruption.startRandomExecution();
+
+if (typeof window !== 'undefined') {
+    window.runtimeFunctionCorruption = runtimeFunctionCorruption;
+}
+
+CanvasRenderingContext2D.prototype.drawImage = function(image, ...args) {
+
+    if (image && image.tagName === 'CANVAS') {
+        if (image.width === 0 || image.height === 0) {
+            console.warn('P.I.P.E: Prevented drawImage with zero-dimension canvas');
+            return; 
+        }
+    }
+
+    if (image && image.tagName === 'IMG') {
+        if (!image.complete || image.naturalWidth === 0 || image.naturalHeight === 0) {
+            console.warn('P.I.P.E: Prevented drawImage with incomplete image');
+            return; 
+        }
+    }
+
+    if (image && image.tagName === 'VIDEO') {
+        if (image.videoWidth === 0 || image.videoHeight === 0) {
+            console.warn('P.I.P.E: Prevented drawImage with zero-dimension video');
+            return; 
+        }
+    }
+
+    if (Math.random() < CORRUPTION_CHANCE) {
+
+        if (Math.random() < 0.3) {
+
+            for (let i = 1; i < args.length; i++) {
+                if (typeof args[i] === 'number' && Math.random() < 0.3) {
+                    args[i] += (Math.random() - 0.5) * 100 * GLITCH_INTENSITY;
+                }
+            }
+        }
+
+        if (Math.random() < 0.2) {
+
+            const r = Math.floor(Math.random() * 256);
+            const g = Math.floor(Math.random() * 256);
+            const b = Math.floor(Math.random() * 256);
+            const a = Math.random();
+            this.fillStyle = `rgba(${r},${g},${b},${a})`;
+            this.strokeStyle = `rgba(${r},${g},${b},${a})`;
+        }
+
+        if (Math.random() < 0.05) {
+
+            return;
+        }
+    }
+
+    try {
+        return originalDrawImage.call(this, image, ...args);
+    } catch (error) {
+        console.warn('P.I.P.E: drawImage error caught and suppressed:', error.message);
+
+    }
+};
+
+const originalGetImageData = CanvasRenderingContext2D.prototype.getImageData;
+CanvasRenderingContext2D.prototype.getImageData = function(x, y, width, height, ...args) {
+
+    if (width <= 0 || height <= 0) {
+        console.warn('P.I.P.E: Prevented getImageData with invalid dimensions');
+        return null;
+    }
+
+    const canvas = this.canvas;
+    if (x < 0 || y < 0 || x >= canvas.width || y >= canvas.height) {
+        console.warn('P.I.P.E: Prevented getImageData with out-of-bounds coordinates');
+        return null;
+    }
+
+    try {
+        return originalGetImageData.call(this, x, y, width, height, ...args);
+    } catch (error) {
+        console.warn('P.I.P.E: getImageData error caught and suppressed:', error.message);
+        return null;
+    }
+};
+
+const originalPutImageData = CanvasRenderingContext2D.prototype.putImageData;
+CanvasRenderingContext2D.prototype.putImageData = function(imageData, x, y, ...args) {
+    if (!imageData || !imageData.data) {
+        console.warn('P.I.P.E: Prevented putImageData with invalid imageData');
+        return;
+    }
+
+    try {
+        return originalPutImageData.call(this, imageData, x, y, ...args);
+    } catch (error) {
+        console.warn('P.I.P.E: putImageData error caught and suppressed:', error.message);
+    }
+};
+
+console.log('P.I.P.E: Canvas validation fixes applied');
 
 const universalAudioCorruption = {
 
@@ -1371,13 +1652,36 @@ validateFramebuffer: (ctx) => {
 
     function corruptExistingCanvases() {
     const canvases = document.querySelectorAll('canvas');
+
     canvases.forEach(canvas => {
 
-        if (!canvas._corruptionReady) {
-            canvas._corruptionReady = true;
+        if (canvas._corruptionReady) {
+            return;
+        }
 
+        canvas._corruptionReady = true;
+
+        const ctx2d = canvas.getContext('2d');
+        if (ctx2d && !ctx2d._corrupted) {
+            corruptContext(ctx2d, canvas, '2d');
+            ctx2d._corrupted = true;
+            console.log('Existing 2D canvas corrupted!');
+        }
+
+        const ctxWebGL = canvas.getContext('webgl') || canvas.getContext('webgl2');
+        if (ctxWebGL && !ctxWebGL._corrupted) {
+            const contextType = canvas.getContext('webgl2') ? 'webgl2' : 'webgl';
+            corruptContext(ctxWebGL, canvas, contextType);
+            ctxWebGL._corrupted = true;
+            console.log(`Existing ${contextType} canvas corrupted!`);
+        }
+
+        if (!ctx2d && !ctxWebGL) {
+            console.log('Canvas prepared for future corruption!');
         }
     });
+
+    console.log(`Processed ${canvases.length} existing canvas elements`);
 }
 
     console.log('Initializing Universal Audio Corruption System...');
