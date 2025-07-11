@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         P.I.P.E (Page‑Induced Psychedelic Effect)
 // @namespace    https://github.com/Gen1xLol/pipe
-// @version      3.0
+// @version      3.1
 // @description  Corrupts pages enough to make you have a seizure, mostly works on HTML5 games
 // @author       Gen1x
 // @match        *://*/*
@@ -28,58 +28,159 @@
     variableAccessLog: new Map(),
 
     wrapVariableAccess: (obj, prop, descriptor) => {
-        if (!descriptor || typeof descriptor.value === 'function') {
-            return descriptor;
-        }
 
-        const originalValue = descriptor.value;
+    if (!runtimeVariableCorruption.originalDescriptors.has(obj)) {
+        runtimeVariableCorruption.originalDescriptors.set(obj, new Map());
+    }
+    runtimeVariableCorruption.originalDescriptors.get(obj).set(prop, { ...descriptor });
+
+    const criticalProps = [
+        'innerHTML', 'outerHTML', 'textContent', 'src', 'href', 'action',
+        'method', 'type', 'name', 'id', 'className', 'style', 'dataset',
+        'addEventListener', 'removeEventListener', 'dispatchEvent',
+        'querySelector', 'querySelectorAll', 'getElementById', 'getElementsByClassName',
+        'appendChild', 'removeChild', 'insertBefore', 'replaceChild',
+        'getAttribute', 'setAttribute', 'removeAttribute', 'hasAttribute',
+        'classList', 'parentNode', 'childNodes', 'firstChild', 'lastChild',
+        'nextSibling', 'previousSibling', 'nodeType', 'nodeName', 'nodeValue',
+        'ownerDocument', 'defaultView', 'documentElement', 'body', 'head',
+        'location', 'navigator', 'console', 'fetch', 'XMLHttpRequest',
+        'setTimeout', 'setInterval', 'clearTimeout', 'clearInterval',
+        'requestAnimationFrame', 'cancelAnimationFrame', 'performance',
+        'localStorage', 'sessionStorage', 'indexedDB', 'crypto'
+    ];
+
+    const protectedObjects = [
+        window, document, navigator, location, console,
+        HTMLElement, Element, Node, EventTarget, Event,
+        XMLHttpRequest, fetch, performance, crypto
+    ];
+
+    const isCritical = criticalProps.includes(prop) ||
+                      protectedObjects.includes(obj) ||
+                      (obj && obj.constructor && protectedObjects.includes(obj.constructor)) ||
+                      prop.startsWith('_') ||
+                      prop.includes('prototype') ||
+                      typeof descriptor.value === 'function';
+
+    if (isCritical) {
+
+        return descriptor;
+    }
+
+    const newDescriptor = {};
+
+    if (descriptor.hasOwnProperty('value')) {
+        let currentValue = descriptor.value;
+
+        newDescriptor.get = function() {
+
+            const accessKey = `${obj.constructor?.name || 'Object'}.${prop}`;
+            const currentCount = runtimeVariableCorruption.variableAccessLog.get(accessKey) || 0;
+            runtimeVariableCorruption.variableAccessLog.set(accessKey, currentCount + 1);
+
+            if (Math.random() < runtimeVariableCorruption.GETTER_CORRUPTION_CHANCE) {
+                try {
+                    const corruptedValue = runtimeVariableCorruption.corruptValue(currentValue, prop);
+
+                    if (typeof corruptedValue === typeof currentValue) {
+                        return corruptedValue;
+                    }
+                } catch (e) {
+
+                    console.warn('Corruption failed for:', prop, e.message);
+                }
+            }
+
+            return currentValue;
+        };
+
+        newDescriptor.set = function(newValue) {
+
+            if (Math.random() < runtimeVariableCorruption.ASSIGNMENT_CORRUPTION_CHANCE) {
+                try {
+                    const corruptedValue = runtimeVariableCorruption.corruptValue(newValue, prop);
+
+                    if (typeof corruptedValue === typeof newValue) {
+                        currentValue = corruptedValue;
+                        return;
+                    }
+                } catch (e) {
+
+                    console.warn('Assignment corruption failed for:', prop, e.message);
+                }
+            }
+
+            currentValue = newValue;
+        };
+
+        newDescriptor.enumerable = descriptor.enumerable !== false;
+        newDescriptor.configurable = descriptor.configurable !== false;
+    }
+
+    else if (descriptor.get || descriptor.set) {
         const originalGet = descriptor.get;
         const originalSet = descriptor.set;
 
-        if (!runtimeVariableCorruption.originalDescriptors.has(obj)) {
-            runtimeVariableCorruption.originalDescriptors.set(obj, new Map());
-        }
-        runtimeVariableCorruption.originalDescriptors.get(obj).set(prop, descriptor);
-
-        const newDescriptor = {
-            enumerable: descriptor.enumerable,
-            configurable: descriptor.configurable
-        };
-
-        if (originalGet || descriptor.value !== undefined) {
+        if (originalGet) {
             newDescriptor.get = function() {
-                let value = originalGet ? originalGet.call(this) : originalValue;
+                try {
+                    const value = originalGet.call(this);
 
-                const accessKey = `${obj.constructor.name}.${prop}`;
-                runtimeVariableCorruption.variableAccessLog.set(accessKey,
-                    (runtimeVariableCorruption.variableAccessLog.get(accessKey) || 0) + 1
-                );
+                    const accessKey = `${obj.constructor?.name || 'Object'}.${prop}`;
+                    const currentCount = runtimeVariableCorruption.variableAccessLog.get(accessKey) || 0;
+                    runtimeVariableCorruption.variableAccessLog.set(accessKey, currentCount + 1);
 
-                if (Math.random() < runtimeVariableCorruption.GETTER_CORRUPTION_CHANCE) {
-                    value = runtimeVariableCorruption.corruptValue(value, prop);
+                    if (Math.random() < runtimeVariableCorruption.GETTER_CORRUPTION_CHANCE) {
+                        const corruptedValue = runtimeVariableCorruption.corruptValue(value, prop);
+                        if (typeof corruptedValue === typeof value) {
+                            return corruptedValue;
+                        }
+                    }
+
+                    return value;
+                } catch (e) {
+
+                    return originalGet.call(this);
                 }
-
-                return value;
             };
         }
 
-        if (originalSet || descriptor.writable) {
+        if (originalSet) {
             newDescriptor.set = function(newValue) {
+                try {
+                    let valueToSet = newValue;
 
-                if (Math.random() < runtimeVariableCorruption.ASSIGNMENT_CORRUPTION_CHANCE) {
-                    newValue = runtimeVariableCorruption.corruptValue(newValue, prop);
-                }
+                    if (Math.random() < runtimeVariableCorruption.ASSIGNMENT_CORRUPTION_CHANCE) {
+                        const corruptedValue = runtimeVariableCorruption.corruptValue(newValue, prop);
+                        if (typeof corruptedValue === typeof newValue) {
+                            valueToSet = corruptedValue;
+                        }
+                    }
 
-                if (originalSet) {
-                    originalSet.call(this, newValue);
-                } else {
-                    originalValue = newValue;
+                    return originalSet.call(this, valueToSet);
+                } catch (e) {
+
+                    return originalSet.call(this, newValue);
                 }
             };
         }
 
-        return newDescriptor;
-    },
+        newDescriptor.enumerable = descriptor.enumerable !== false;
+        newDescriptor.configurable = descriptor.configurable !== false;
+    }
+
+    else {
+        return descriptor;
+    }
+
+    if (!runtimeVariableCorruption.corruptedVariables.has(obj)) {
+        runtimeVariableCorruption.corruptedVariables.set(obj, new Set());
+    }
+    runtimeVariableCorruption.corruptedVariables.get(obj).add(prop);
+
+    return newDescriptor;
+},
 
     corruptValue: (value, propName) => {
         const corruptionType = Math.random();
@@ -1318,6 +1419,255 @@
     universalAudioCorruption.init();
     runtimeVariableCorruption.init();
 
+    function initFileContentCorruption() {
+    const CORRUPTION_INTENSITY = 0.1; 
+    const MAX_ALTERATION = 0.5; 
+
+    const corruptNumbers = (data) => {
+        if (typeof data === 'number') {
+            if (Math.random() < CORRUPTION_INTENSITY) {
+                const alteration = 1 + (Math.random() * 2 - 1) * MAX_ALTERATION;
+                return data * alteration;
+            }
+            return data;
+        }
+
+        if (Array.isArray(data)) {
+            return data.map(item => corruptNumbers(item));
+        }
+
+        if (data && typeof data === 'object') {
+            const result = {};
+            for (const key in data) {
+                result[key] = corruptNumbers(data[key]);
+            }
+            return result;
+        }
+
+        return data;
+    };
+
+    const originalFetch = window.fetch;
+    window.fetch = async function(input, init) {
+        const response = await originalFetch.call(this, input, init);
+
+        const contentType = response.headers.get('content-type') || '';
+        if (!contentType.includes('application/json') &&
+            !contentType.includes('text/csv') &&
+            !contentType.includes('application/xml') &&
+            !contentType.includes('text/xml')) {
+            return response;
+        }
+
+        const clonedResponse = response.clone();
+
+        try {
+            const text = await clonedResponse.text();
+            let corruptedText = text;
+
+            if (contentType.includes('application/json')) {
+                try {
+                    const json = JSON.parse(text);
+                    const corruptedJson = corruptNumbers(json);
+                    corruptedText = JSON.stringify(corruptedJson);
+                } catch (e) {
+
+                }
+            }
+            else if (contentType.includes('text/csv')) {
+                corruptedText = text.split('\n').map(line => {
+                    return line.split(',').map(item => {
+
+                        const num = parseFloat(item);
+                        if (!isNaN(num)) {
+                            if (Math.random() < CORRUPTION_INTENSITY) {
+                                const alteration = 1 + (Math.random() * 2 - 1) * MAX_ALTERATION;
+                                return String(num * alteration);
+                            }
+                        }
+                        return item;
+                    }).join(',');
+                }).join('\n');
+            }
+            else if (contentType.includes('application/xml') || contentType.includes('text/xml')) {
+
+                corruptedText = text.replace(/\d+\.?\d*/g, match => {
+                    const num = parseFloat(match);
+                    if (!isNaN(num) && Math.random() < CORRUPTION_INTENSITY) {
+                        const alteration = 1 + (Math.random() * 2 - 1) * MAX_ALTERATION;
+                        return String(num * alteration);
+                    }
+                    return match;
+                });
+            }
+
+            const blob = new Blob([corruptedText], { type: contentType });
+            return new Response(blob, {
+                status: response.status,
+                statusText: response.statusText,
+                headers: response.headers
+            });
+        } catch (e) {
+            console.error('File corruption failed:', e);
+            return response;
+        }
+    };
+
+    const originalXHROpen = XMLHttpRequest.prototype.open;
+    const originalXHRSend = XMLHttpRequest.prototype.send;
+
+    XMLHttpRequest.prototype.open = function(method, url) {
+        this._method = method;
+        this._url = url;
+        return originalXHROpen.apply(this, arguments);
+    };
+
+    XMLHttpRequest.prototype.send = function(data) {
+        const originalOnLoad = this.onload;
+        const originalOnReadyStateChange = this.onreadystatechange;
+
+        this.onload = function(e) {
+            if (this.responseType === '' || this.responseType === 'text') {
+                const contentType = this.getResponseHeader('content-type') || '';
+
+                if (contentType.includes('application/json') ||
+                    contentType.includes('text/csv') ||
+                    contentType.includes('application/xml') ||
+                    contentType.includes('text/xml')) {
+
+                    try {
+                        let corruptedText = this.responseText;
+
+                        if (contentType.includes('application/json')) {
+                            const json = JSON.parse(this.responseText);
+                            const corruptedJson = corruptNumbers(json);
+                            corruptedText = JSON.stringify(corruptedJson);
+                        }
+                        else if (contentType.includes('text/csv')) {
+                            corruptedText = this.responseText.split('\n').map(line => {
+                                return line.split(',').map(item => {
+                                    const num = parseFloat(item);
+                                    if (!isNaN(num)) {
+                                        if (Math.random() < CORRUPTION_INTENSITY) {
+                                            const alteration = 1 + (Math.random() * 2 - 1) * MAX_ALTERATION;
+                                            return String(num * alteration);
+                                        }
+                                    }
+                                    return item;
+                                }).join(',');
+                            }).join('\n');
+                        }
+                        else if (contentType.includes('application/xml') || contentType.includes('text/xml')) {
+                            corruptedText = this.responseText.replace(/\d+\.?\d*/g, match => {
+                                const num = parseFloat(match);
+                                if (!isNaN(num) && Math.random() < CORRUPTION_INTENSITY) {
+                                    const alteration = 1 + (Math.random() * 2 - 1) * MAX_ALTERATION;
+                                    return String(num * alteration);
+                                }
+                                return match;
+                            });
+                        }
+
+                        Object.defineProperty(this, 'responseText', {
+                            value: corruptedText,
+                            writable: false
+                        });
+
+                        if ('response' in this) {
+                            try {
+                                Object.defineProperty(this, 'response', {
+                                    value: contentType.includes('application/json') ?
+                                        JSON.parse(corruptedText) : corruptedText,
+                                    writable: false
+                                });
+                            } catch (e) {}
+                        }
+                    } catch (e) {
+                        console.error('XHR corruption failed:', e);
+                    }
+                }
+            }
+
+            if (originalOnLoad) {
+                originalOnLoad.call(this, e);
+            }
+        };
+
+        this.onreadystatechange = function(e) {
+            if (this.readyState === 4 &&
+                (this.responseType === '' || this.responseType === 'text')) {
+
+                const contentType = this.getResponseHeader('content-type') || '';
+
+                if (contentType.includes('application/json') ||
+                    contentType.includes('text/csv') ||
+                    contentType.includes('application/xml') ||
+                    contentType.includes('text/xml')) {
+
+                    try {
+                        let corruptedText = this.responseText;
+
+                        if (contentType.includes('application/json')) {
+                            const json = JSON.parse(this.responseText);
+                            const corruptedJson = corruptNumbers(json);
+                            corruptedText = JSON.stringify(corruptedJson);
+                        }
+                        else if (contentType.includes('text/csv')) {
+                            corruptedText = this.responseText.split('\n').map(line => {
+                                return line.split(',').map(item => {
+                                    const num = parseFloat(item);
+                                    if (!isNaN(num) && Math.random() < CORRUPTION_INTENSITY) {
+                                        const alteration = 1 + (Math.random() * 2 - 1) * MAX_ALTERATION;
+                                        return String(num * alteration);
+                                    }
+                                    return item;
+                                }).join(',');
+                            }).join('\n');
+                        }
+                        else if (contentType.includes('application/xml') || contentType.includes('text/xml')) {
+                            corruptedText = this.responseText.replace(/\d+\.?\d*/g, match => {
+                                const num = parseFloat(match);
+                                if (!isNaN(num) && Math.random() < CORRUPTION_INTENSITY) {
+                                    const alteration = 1 + (Math.random() * 2 - 1) * MAX_ALTERATION;
+                                    return String(num * alteration);
+                                }
+                                return match;
+                            });
+                        }
+
+                        Object.defineProperty(this, 'responseText', {
+                            value: corruptedText,
+                            writable: false
+                        });
+
+                        if ('response' in this) {
+                            try {
+                                Object.defineProperty(this, 'response', {
+                                    value: contentType.includes('application/json') ?
+                                        JSON.parse(corruptedText) : corruptedText,
+                                    writable: false
+                                });
+                            } catch (e) {}
+                        }
+                    } catch (e) {
+                        console.error('XHR corruption failed:', e);
+                    }
+                }
+            }
+
+            if (originalOnReadyStateChange) {
+                originalOnReadyStateChange.call(this, e);
+            }
+        };
+
+        return originalXHRSend.apply(this, arguments);
+    };
+
+    console.log('File content corruption system initialized!');
+}
+
+initFileContentCorruption();
+
     const codeCorruption = {
         corruptEventSystem: () => {
             const originalAddEventListener = EventTarget.prototype.addEventListener;
@@ -1678,6 +2028,7 @@
         }
     }
 },
+
         corruptWebGLState: (ctx) => {
 
             if (!ctx.canvas || ctx.canvas.width <= 0 || ctx.canvas.height <= 0) {
